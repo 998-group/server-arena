@@ -14,32 +14,30 @@ const io = new Server(server, {
 });
 
 const players = {}; // { socket.id: { name, room, hp, score, position } }
-const leaderboard = []; // To keep track of player scores
 
-// Helper function to update leaderboard
-const updateLeaderboard = () => {
-  // Sort leaderboard by score
+const updateLeaderboard = (room) => {
   const sortedLeaderboard = Object.entries(players)
+    .filter(([_, player]) => player.room === room)
     .map(([id, player]) => ({ id, name: player.name, score: player.score }))
     .sort((a, b) => b.score - a.score);
-  io.emit("leaderboard_update", sortedLeaderboard);
+  io.to(room).emit("leaderboard_update", sortedLeaderboard);
 };
 
-// Function to handle player damage
-const handleDamage = (targetId, amount) => {
+const handleDamage = (socket, targetId, amount) => {
   const targetPlayer = players[targetId];
   if (targetPlayer) {
     targetPlayer.hp -= amount;
     if (targetPlayer.hp <= 0) {
       io.to(targetPlayer.room).emit("player_dead", targetId);
-      // Player died, remove them from the game
       delete players[targetId];
-      updateLeaderboard();
+      players[socket.id].score += 100; // Award points for kill
+      updateLeaderboard(targetPlayer.room);
     } else {
       io.to(targetPlayer.room).emit("player_damaged", {
         id: targetId,
         hp: targetPlayer.hp,
       });
+      players[socket.id].score += 10; // Award points for damage
     }
   }
 };
@@ -47,56 +45,98 @@ const handleDamage = (targetId, amount) => {
 io.on("connection", (socket) => {
   console.log(`Player connected: ${socket.id}`);
 
-  // When player joins a room
   socket.on("join_room", ({ name, room }) => {
+    if (
+      typeof name !== "string" ||
+      name.length > 20 ||
+      typeof room !== "string" ||
+      room.length > 20
+    ) {
+      socket.emit("error", { message: "Invalid name or room" });
+      return;
+    }
+
     socket.join(room);
     players[socket.id] = {
       name,
       room,
       hp: 100,
       score: 0,
-      position: { x: 0, y: 0 },
+      position: { x: 400, y: 300 }, // Center of 800x600
     };
     console.log(`${name} joined room ${room}`);
     socket.to(room).emit("player_joined", { id: socket.id, name });
 
-    // Emit the current player list to the new player
-    io.to(socket.id).emit("player_positions", players);
-    updateLeaderboard();
+    const roomPlayers = Object.fromEntries(
+      Object.entries(players).filter(([_, player]) => player.room === room)
+    );
+    io.to(socket.id).emit("player_positions", roomPlayers);
+    updateLeaderboard(room);
   });
 
-  // Handle player movement
   socket.on("move", ({ position, room }) => {
     if (players[socket.id]) {
       players[socket.id].position = position;
       socket.to(room).emit("player_move", { id: socket.id, position });
+      io.to(socket.id).emit("player_positions", {
+        ...players,
+        [socket.id]: players[socket.id],
+      });
     }
   });
 
-  // Handle shooting (fire)
   socket.on("fire", ({ direction, room }) => {
-    // Calculate bullet movement, here we're simply emitting the shot in the direction
-    socket.to(room).emit("bullet_fired", { id: socket.id, direction });
+    const shooter = players[socket.id];
+    if (!shooter) return;
+
+    const bullet = {
+      x: shooter.position.x,
+      y: shooter.position.y,
+      direction,
+      speed: 10,
+    };
+
+    socket.to(room).emit("bullet_fired", {
+      id: socket.id,
+      x: bullet.x,
+      y: bullet.y,
+      direction,
+    });
+
+    const interval = setInterval(() => {
+      bullet.x += bullet.direction.x * bullet.speed;
+      bullet.y += bullet.direction.y * bullet.speed;
+
+      for (const [id, player] of Object.entries(players)) {
+        if (player.room !== room || id === socket.id) continue;
+        const dx = bullet.x - player.position.x;
+        const dy = bullet.y - player.position.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < 20) {
+          handleDamage(socket, id, 10);
+          clearInterval(interval);
+          break;
+        }
+      }
+
+      if (
+        bullet.x < 0 ||
+        bullet.x > 800 ||
+        bullet.y < 0 ||
+        bullet.y > 600
+      ) {
+        clearInterval(interval);
+      }
+    }, 16);
   });
 
-  // Handle player attack
-  socket.on("attack", ({ room }) => {
-    socket.to(room).emit("player_attacked", { id: socket.id });
-  });
-
-  // Handle damage (if bullet hits)
-  socket.on("damage", ({ targetId, amount }) => {
-    handleDamage(targetId, amount);
-  });
-
-  // Handle player disconnect
   socket.on("disconnect", () => {
     const player = players[socket.id];
     if (player) {
       socket.to(player.room).emit("player_left", socket.id);
       console.log(`${player.name} left the game`);
       delete players[socket.id];
-      updateLeaderboard();
+      updateLeaderboard(player.room);
     }
   });
 });

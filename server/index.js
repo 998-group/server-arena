@@ -46,6 +46,8 @@ io.on("connection", (socket) => {
   console.log(`Player connected: ${socket.id}`);
 
   socket.on("join_room", ({ name, room }) => {
+    console.log("ERR: ", name, room);
+
     if (
       typeof name !== "string" ||
       name.length > 20 ||
@@ -119,12 +121,7 @@ io.on("connection", (socket) => {
         }
       }
 
-      if (
-        bullet.x < 0 ||
-        bullet.x > 800 ||
-        bullet.y < 0 ||
-        bullet.y > 600
-      ) {
+      if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) {
         clearInterval(interval);
       }
     }, 16);

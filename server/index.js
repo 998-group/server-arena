@@ -121,7 +121,7 @@ io.on("connection", (socket) => {
         }
       }
 
-      if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) {
+      if (bullet.x < 0 || bullet.x > 1920 || bullet.y < 0 || bullet.y > 1280) {
         clearInterval(interval);
       }
     }, 16);

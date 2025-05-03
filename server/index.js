@@ -16,6 +16,7 @@ const io = new Server(server, {
 const rooms = {}; // { room: { players: {}, bullets: [], started: false } }
 
 const updateLeaderboard = (room) => {
+  if (!rooms[room]) return;
   const sortedLeaderboard = Object.entries(rooms[room].players)
     .map(([id, player]) => ({ id, name: player.name, score: player.score }))
     .sort((a, b) => b.score - a.score);
@@ -43,9 +44,9 @@ const handleDamage = (socket, targetId, amount) => {
 };
 
 const assignRoles = (room) => {
+  if (!rooms[room]) return;
   const playerIds = Object.keys(rooms[room].players);
   if (playerIds.length >= 2) {
-    // Tasodifiy o‘yinchi tanlash
     const randomIndex = Math.floor(Math.random() * playerIds.length);
     const redPlayerId = playerIds[randomIndex];
     const bluePlayerId = playerIds.find((id) => id !== redPlayerId) || playerIds[(randomIndex + 1) % playerIds.length];
@@ -61,6 +62,7 @@ const assignRoles = (room) => {
 };
 
 const checkCollision = (room) => {
+  if (!rooms[room]) return;
   const players = rooms[room].players;
   const playerIds = Object.keys(players);
   for (const id of playerIds) {
@@ -71,7 +73,6 @@ const checkCollision = (room) => {
           const dy = players[id].position.y - players[targetId].position.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
           if (distance < 20) {
-            // Ko‘k o‘yinchi uchun o‘yin tugadi
             io.to(targetId).emit("game_over", { message: "Qizil o‘yinchi sizga tegdi!" });
             players[id].score += 1; // Qizil o‘yinchi uchun +1 score
             updateLeaderboard(room);
@@ -112,10 +113,9 @@ io.on("connection", (socket) => {
     console.log(`${name} joined room ${room}`);
     socket.to(room).emit("player_joined", { id: socket.id, name });
 
-    io.to(socket.id).emit("player_positions", rooms[room].players);
+    io.to(socket.id).emit("player_positions", rooms[room]?.players || {});
     updateLeaderboard(room);
 
-    // O‘yinchilar sonini tekshirish va o‘yinni boshlash
     if (Object.keys(rooms[room].players).length >= 2 && !rooms[room].started) {
       rooms[room].started = true;
       io.to(room).emit("game_start", { message: "O‘yin boshlandi!" });
@@ -127,7 +127,6 @@ io.on("connection", (socket) => {
     const player = rooms[room]?.players[socket.id];
     if (!player) return;
 
-    // Pozitsiyani tekshirish
     if (
       position.x >= 0 &&
       position.x <= 800 &&
@@ -138,7 +137,8 @@ io.on("connection", (socket) => {
     ) {
       player.position = position;
       io.to(room).emit("player_move", { id: socket.id, position });
-      checkCollision(room); // Harakatdan keyin teginishni tekshirish
+      io.to(socket.id).emit("player_positions", rooms[room]?.players || {});
+      checkCollision(room);
     } else {
       socket.emit("error", { message: "Invalid movement" });
     }
@@ -152,7 +152,7 @@ io.on("connection", (socket) => {
       shooterId: socket.id,
       bulletId: `${socket.id}-${Date.now()}`,
       x: shooter.position.x,
-      y: shooter.position.y,
+      y: shooter.position.y, // Xato tuzatildi
       direction,
       speed: 10,
     };
@@ -198,7 +198,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// O‘qlar uchun umumiy o‘yin tsikli
 setInterval(() => {
   for (const room in rooms) {
     const roomData = rooms[room];
@@ -213,7 +212,7 @@ setInterval(() => {
         const distance = Math.sqrt(dx * dx + dy * dy);
         if (distance < 20) {
           handleDamage(io.sockets.sockets.get(bullet.shooterId), id, 10);
-          return false; // O‘qni o‘chirish
+          return false;
         }
       }
 
